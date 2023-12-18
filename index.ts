@@ -10,6 +10,11 @@ type Result<T> = {
     readonly data: T;
 };
 
+type Env = {
+    readonly OPEN_AI_API_KEY: string;
+    readonly DISCORD_WEBHOOK?: string | undefined;
+}
+
 type Article = {
     readonly title: string;
     readonly link: string;
@@ -17,7 +22,7 @@ type Article = {
 };
 
 type SummarizedArticle = Article & {
-    readonly summary: string | undefined;
+    readonly summary: string | undefined; // not optional
 }
   
 type TechCrunchFeed = {
@@ -32,9 +37,24 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_PROMPT = `You're an IT-savvy journalist. Summarize news in around 100 words without title.`;
 
 const xmlParser = new XMLParser();
-const client = new OpenAI({ apiKey: Bun.env.OPEN_AI_API_KEY });
 
-async function fetchLastFeed(): Promise<Result<Article[]>> {
+function loadEnv(): Result<Env> {
+    const { OPEN_AI_API_KEY, DISCORD_WEBHOOK } = process.env;
+    if (OPEN_AI_API_KEY === undefined) {
+        return {
+            error: new Error("lack required envinronment variables"),
+        };
+    }
+
+    return {
+        data: {
+            OPEN_AI_API_KEY,
+            DISCORD_WEBHOOK,
+        }
+    }
+}
+
+async function fetchYesterdayArticlesFromTechCrunch(): Promise<Result<Article[]>> {
     const yesterdayMs = Date.now() - ONE_DAY_MS;
     try {
         const res = await fetch("https://techcrunch.com/feed/");
@@ -75,7 +95,9 @@ function buildMessageWithAritcleUrl(url: string): ChatCompletionMessageParam[] {
     ]
 }
 
-async function summarize(articles: Article[]): Promise<Result<SummarizedArticle[]>> {
+async function summarize(apikey: string, articles: Article[]): Promise<Result<SummarizedArticle[]>> {
+    const client = new OpenAI({ apiKey: apikey });
+
     const summarizings = articles.map(async (article) => {
         const completion = await client.chat.completions.create({
             messages: buildMessageWithAritcleUrl(article.link),
@@ -112,14 +134,22 @@ async function summarize(articles: Article[]): Promise<Result<SummarizedArticle[
 }
 
 async function main(): Promise<void> {
-    const fetchResult = await fetchLastFeed();
+    const env = loadEnv();
+    if (env.error != null) {
+        console.error("You need `OPEN_AI_API_KEY` in environment variables.");
+        console.error("Please read README.md again carefully!");
+        process.exit(1);
+    }
+    const { OPEN_AI_API_KEY } = env.data;
+
+    const fetchResult = await fetchYesterdayArticlesFromTechCrunch();
     if (fetchResult.error != null) {
         console.error("Feed Error: failed to fetch atom feed from TechCrunch.");
         console.error(fetchResult.error);
         process.exit(1);
     }
 
-    const summarizeResult = await summarize(fetchResult.data);
+    const summarizeResult = await summarize(OPEN_AI_API_KEY, fetchResult.data);
     if (summarizeResult.error != null) {
         console.error("Open AI Error: failed to summarize articles");
         console.error(summarizeResult.error);
