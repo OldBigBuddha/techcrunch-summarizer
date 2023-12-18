@@ -6,7 +6,8 @@ The "TechCrunch News Summarizer" implemented in TypeScript is a project designed
 
 * [bun](https://bun.sh/)
 * [Open AI API Key](https://platform.openai.com/docs/overview)
-* [Charging more than $1 for OpenAI](https://help.openai.com/en/articles/7102672-how-can-i-access-gpt-4) 
+    * [Charging more than $1 for OpenAI](https://help.openai.com/en/articles/7102672-how-can-i-access-gpt-4)
+* Discord Webhook URL(optional)
 
 ## How to setup and run
 
@@ -15,6 +16,8 @@ To create `.env` refered with `.env.example`:
 ```sh
 $ echo 'OPEN_AI_API_KEY="<your open ai api key>"' > .env
 ```
+
+*If you'd like to notify to Discord, you must set `DISCORD_WEBHOOK_URL` in `.env`.
 
 To install dependencies:
 
