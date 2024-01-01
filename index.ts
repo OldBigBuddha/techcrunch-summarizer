@@ -1,3 +1,4 @@
+import { TargetLanguageCode, Translator } from "deepl-node";
 import { OpenAI } from "openai";
 import { XMLParser } from "fast-xml-parser";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions.mjs";
@@ -12,6 +13,7 @@ type Result<T> = {
 
 type Env = {
     readonly OPEN_AI_API_KEY: string;
+    readonly DEEPL_API_AUTH_KEY: string;
     readonly DISCORD_WEBHOOK_URL?: string | undefined;
 }
 
@@ -28,7 +30,7 @@ type SummarizedArticle = {
     readonly pubDate: Date;
     readonly summary: string | undefined; // not optional
 } & BaseArticle;
-  
+
 type TechCrunchFeed = {
     readonly rss: {
         readonly channel: {
@@ -37,14 +39,21 @@ type TechCrunchFeed = {
     };
 };
 
+type DeepLTranslateResponseBody = {
+    readonly translations: {
+        readonly detected_source_language: string;
+        readonly text: string;
+    }[];
+}
+
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_PROMPT = `You're an IT-savvy journalist. Summarize news in around 100 words without title.`;
 
 const xmlParser = new XMLParser();
 
 function loadEnv(): Result<Env> {
-    const { OPEN_AI_API_KEY, DISCORD_WEBHOOK_URL } = process.env;
-    if (OPEN_AI_API_KEY === undefined) {
+    const { OPEN_AI_API_KEY, DEEPL_API_AUTH_KEY, DISCORD_WEBHOOK_URL } = process.env;
+    if (OPEN_AI_API_KEY === undefined || DEEPL_API_AUTH_KEY === undefined) {
         return {
             error: new Error("lack required envinronment variables"),
         };
@@ -53,6 +62,7 @@ function loadEnv(): Result<Env> {
     return {
         data: {
             OPEN_AI_API_KEY,
+            DEEPL_API_AUTH_KEY,
             DISCORD_WEBHOOK_URL,
         }
     }
@@ -141,6 +151,48 @@ async function summarize(apikey: string, articles: FeedArticle[]): Promise<Resul
     }
 }
 
+async function translate(authKey: string, text: string, targetLang: TargetLanguageCode): Promise<Result<string>> {
+    // const translator = new Translator(authKey);
+
+    try {
+        // see: https://www.deepl.com/ja/docs-api/translate-text/translate-text
+        const res = await fetch(
+            "https://api-free.deepl.com/v2/translate",
+            {
+                method: "POST",
+                mode: "no-cors",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `DeepL-Auth-Key ${authKey}`,
+                },
+                body: JSON.stringify({
+                    text: [text],
+                    target_lang: targetLang,
+                }),
+            }
+        );
+
+        if (res.ok === false) {
+            const e = new Error("Failed to translate summary");
+            e.name = "DeepL API Error";
+            e.cause = await res.json();
+            return {
+                error: e,
+            }
+        }
+
+        const translated = await res.json() as DeepLTranslateResponseBody;
+        return {
+            data: translated.translations[0].text,
+        };
+    } catch (error) {
+        return {
+            error: error as Error,
+        };
+    }
+
+}
+
 async function notifySummarizedArticleToDiscord(webhookUrl: string, article: SummarizedArticle): Promise<void> {
     const content = `[${article.title}](${article.link}) - Posted at ${article.pubDate.toLocaleString("ja-JP", { timeZone: "JST" })}\n${article.summary}`;
     await fetch(webhookUrl, {
@@ -161,7 +213,7 @@ async function main(): Promise<void> {
         console.error("Please read README.md again carefully!");
         process.exit(1);
     }
-    const { OPEN_AI_API_KEY, DISCORD_WEBHOOK_URL } = env.data;
+    const { OPEN_AI_API_KEY, DEEPL_API_AUTH_KEY, DISCORD_WEBHOOK_URL } = env.data;
 
     const fetchResult = await fetchYesterdayArticlesFromTechCrunch();
     if (fetchResult.error != null) {
@@ -177,7 +229,26 @@ async function main(): Promise<void> {
         process.exit(1);
     }
 
-    console.log(summarizeResult.data);
+    const translatingSummaries = summarizeResult.data.map(async (article): Promise<SummarizedArticle> => {
+        if (article.summary == null) {
+            return article;
+        }
+
+        const translateResult = await translate(DEEPL_API_AUTH_KEY, article.summary, "ja");
+        if (translateResult.error != null) {
+            console.error(translateResult.error);
+            return article;
+        }
+
+        return {
+            ...article,
+            summary: translateResult.data,
+        }
+    });
+
+    const translatedSummaries = await Promise.all(translatingSummaries);
+
+    console.log(translatedSummaries);
 
     if (DISCORD_WEBHOOK_URL == null) {
         console.warn("No notification to the Discord because the Webhook URL is not set in environment variables.");

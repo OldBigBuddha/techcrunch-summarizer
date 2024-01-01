@@ -9,6 +9,7 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "deepl-node": "^1.11.0",
     "fast-xml-parser": "4.3.2",
     "openai": "4.23.0"
   }
